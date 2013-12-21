@@ -1,0 +1,824 @@
+<!DOCTYPE html><html lang="en"><head> <meta charset="utf-8">
+<title>Network of individuals at risk of HIV</title>
+
+<link href='http://fonts.googleapis.com/css?family=Lato:400,300|Josefin+Sans|PT+Sans' rel='stylesheet' type='text/css'>
+<style type="text/css">
+     	
+     	html {
+  		width: 1200px;
+		}
+
+     	body {
+     		color: white;
+     		margin-top: 25px;
+			margin-left: 25px;
+			margin-right: auto;
+			background:black;
+			/*#110d33*/
+		    font-family: 'Lato', sans-serif;
+		    font-size: 14px;
+		    font-weight: 300;
+		    position: relative;
+     	}
+     	
+     	div{
+     		display:block
+     	}
+     	
+    	h1{font-family: 'Lato', sans-serif;
+    	}
+    
+        p {
+            color: white;
+            font-size:18px;
+            font-family: 'Lato', sans-serif;
+        }
+        
+        a {
+            color: white;
+        }
+            
+        table {
+            color: white;
+            opacity:0.75;
+            font-size:18px;
+            font-family: 'Lato', sans-serif;
+        }
+        
+        svg {
+        	display: block;
+        	color: white
+        }
+        
+.axis {
+  stroke: white;
+  stroke-width: 1.5px;
+}
+
+.node circle {
+  stroke: #000;
+}
+
+.link {
+  fill: none;
+  //stroke: #999;
+  stroke-width: 1.5px;
+  stroke-opacity: .2;
+}
+
+.link.active {
+  stroke: #DC143C;
+  stroke-width: 4px;
+  stroke-opacity: 0.8;
+}
+
+.nodes circle.active {
+  stroke: #DC143C;
+  stroke-width: 3px;
+}
+
+.mainlegendtext {
+   fill:"white";
+   font-family: 'Lato', sans-serif;
+}
+
+</style>
+
+</head>
+
+<script src="http://d3js.org/d3.v2.js?2.8.1"></script>
+<body>
+
+<h1> Hive Plot of Network of Individuals at Risk of HIV</h1>
+<p id="info">Loading… </p>
+
+<p id="explanation"> This is a d3-based visualization of the HIV network data for
+  Harvard's Stat 221 class (see original visualization <a href="http://theory.info/harvardstat221#?v=network-of-individuals-at-risk-of-hiv">here</a>). This plot is 
+  based off of the <a href="http://bost.ocks.org/mike/hive/">hive plot method for visualizing networks</a>. 
+  There are 2 axes, defined by HIV status. Along each axis, individuals are
+  first grouped and color-coded by gender. Then, within gender
+  categories, they are sorted by degree (number of friends). Nodes
+  with higher degree attributes are located closer to the origin of
+  the hive plot. The links connecting the two axes denote links between serodiscordant 
+  individuals, while links connecting individuals on the same axis denote links between 
+  individuals of the same HIV status. One can mouse over both links and nodes to display
+  information in the legend. </p>
+
+
+<script type="text/javascript">
+
+var width = 750,
+    height = 850,
+    innerRadius = 40,
+    outerRadius = 540,
+    majorAngle = 2 * Math.PI / 3,
+    minorAngle = 1 * Math.PI / 12;
+
+
+var angle = d3.scale.ordinal()
+    .domain(["neg", "pos"])
+    .range([0, majorAngle - minorAngle]);
+
+var radius = d3.scale.linear()
+    .range([innerRadius, outerRadius]);
+
+
+var svgLegend = d3.select("body").append("div")
+    .attr("id", "legend")
+    .attr("style", "float:left")
+    .attr("height", height)
+    .attr("width", "350")
+    .append("svg").attr("width", 350).attr("height", height)
+
+var svg = d3.select("body").append("div")
+    .attr("id", "visualization")
+    .attr("height", height)
+    .attr("margin-left", "350px")
+    .append("svg")
+    .attr("width", width)
+    .attr("height", height)
+    .append("g")
+    .attr("transform", "translate(" + outerRadius * .20 + "," + outerRadius * .57 + ")");
+
+
+
+var formatNumber = d3.format(",d"),
+    defaultInfo;
+
+
+// start loading data and visualization here
+
+d3.csv("/data/refnetwork-nodes.csv", function (csv) {
+
+    nodesByIndex = csv.map(function (el) {
+        el.binaryAttribute = +el.binaryAttribute;
+        el.index = +el.index; // change to ID b/c want to use that lates
+        el.degree = +el.degree; // number of friends (links)
+        if (el.binaryAttribute == 1) {
+            el.type = "HIV-Positive";
+        } else {
+            el.type = "HIV-Negative";
+        }
+        return el;
+    });
+
+    // array of degrees (to calculate min and max later)
+    degs = nodesByIndex.map(function (d) {
+        return d.degree;
+    });
+
+
+    // group nodes by HIV+ / 
+    var nodesByType = d3.nest().key(function (d) {
+        return d.binaryAttribute;
+    }).sortKeys(d3.ascending).entries(nodesByIndex);
+
+    // sort (apply function defined above)
+    nodesByType.forEach(function (type) {
+        type.values = type.values.sort(compare) // return array in order of  
+    });
+
+    // now assign plotIndex values
+
+    nodesByType.forEach(function (type) {
+        var lastgender = type.values[0].gender,
+            count = 0;
+        type.values.forEach(function (d, i) {
+            if (d.gender != lastgender) lastgender = d.gender, count += 2;
+            d.plotIndex = count++;
+            nodesByIndex[d.index].plotIndex = d.plotIndex;
+        });
+        type.count = count - 1;
+    });
+
+    nodesByType[0].key = "neg"
+    nodesByType[1].key = "pos"
+
+
+    // load edges within here
+    d3.csv('/data/refnetwork-edges.csv', function (csv) {
+        edges = [];
+
+        // first convert the data to numeric: this returns array of 413 elements (corresponding to 
+        // rows of the spreadsheet (as csv)
+        csv = csv.map(function (el) {
+            el.source = +el.source;
+            el.target = +el.target;
+            el.distance = +el.distance;
+            el.wdistance = +el.wdistance;
+            return el;
+        });
+
+        // process the edges data to form the necessary object
+
+        // create new object
+        var el, sourceType, targetType, linkType;
+        // loop over all links (over 413 elements in csv array of link objects)
+        for (var ii = 0; ii < csv.length; ii++) {
+            el = csv[ii];
+
+            if (nodesByIndex[el.source].binaryAttribute == 0) {
+                sourceType = "neg";
+            } else {
+                sourceType = "pos";
+            }
+            if (nodesByIndex[el.target].binaryAttribute == 0) {
+                targetType = "neg";
+            } else {
+                targetType = "pos";
+            }
+
+            // type of link by gender
+            if (nodesByIndex[el.source].gender == nodesByIndex[el.target].gender) {
+                if (nodesByIndex[el.source].gender == "male") {
+                    linkType = "m-m";
+                } else {
+                    linkType = "f-f";
+                }
+            } else {
+                linkType = "m-f";
+            }
+
+            edges.push({
+                source: {
+                    type: sourceType,
+                    node: nodesByIndex[el.source]
+                }, // push node object instead of just node index
+                target: {
+                    type: targetType,
+                    node: nodesByIndex[el.target]
+                }, // push  node object instead of just node index
+                distance: el.distance, // push 
+                wdistance: el.wdistance, //push distance
+                typeByGender: linkType
+            });
+        }
+
+        var info = d3.select("#info").text(defaultInfo = "Showing " + formatNumber(edges.length) + " friendships among " + formatNumber(nodesByIndex.length) + " individuals.");
+
+        var nodename = d3.select("#nodename").text(defaultText = "");
+        var nodehiv = d3.select("#nodehiv").text(defaultText = "Mouse over links or nodes to view attributes...");
+        var nodegender = d3.select("#nodegender").text(defaultText = "");
+        var nodefriends = d3.select("#nodefriends").text(defaultText = "");
+        var nodephiv = d3.select("#phiv").text(defaultText = "");
+        var nodepfemale = d3.select("#pfemale").text(defaultText = "");
+
+        var name1 = d3.select("#name1").text(defaultText = "");
+        var name2 = d3.select("#name2").text(defaultText = "");
+        var gender1 = d3.select("#gender1").text(defaultText = "");
+        var gender2 = d3.select("#gender2").text(defaultText = "");
+        var hiv1 = d3.select("#hiv1").text(defaultText = "");
+        var hiv2 = d3.select("#hiv2").text(defaultText = "");
+
+        // Set the radius domain.
+        radius.domain([0, d3.max([nodesByType[0].count, nodesByType[1].count])]);
+        // gives back extent of axis (largest index)
+
+        // Draw the axes.
+        svg.selectAll(".axis")
+            .data(nodesByType)
+            .enter().append("line")
+            .attr("class", "axis")
+            .attr("transform", function (d) {
+                return "rotate(" + degrees(angle(d.key)) + ")";
+            })
+            .attr("x1", radius(-2))
+            .attr("x2", function (d) {
+                return radius(d.count + 2);
+            });
+
+        svg.append("text")
+            .attr("id", "hivposlabel")
+            .attr("transform", "rotate(" + degrees(majorAngle) + ")")
+            .attr("x", radius(82))
+            .attr("y", 0)
+            .text("HIV-Positive")
+            .attr("text-anchor", "middle")
+            .attr("style", "fill: white")
+            .attr("transform", "" + degrees(majorAngle))
+            .attr("dy", 150);
+
+        svg.append("text")
+            .attr("id", "hivneglabel")
+            .attr("x", 0)
+            .attr("y", 0)
+            .text("HIV-Negative")
+            .attr("text-anchor", "middle")
+            .attr("style", "fill: white")
+            .attr("dy", -230)
+            .attr("dx", 0);
+
+
+        // Draw the links.
+        svg.append("g")
+            .attr("class", "links")
+            .selectAll(".link")
+            .data(edges)
+            .enter().append("path")
+            .attr("class", "link")
+            .attr("d", link()
+                .angle(function (d) {
+                    return angle(d.type);
+                })
+                .radius(function (d) {
+                    return radius(d.node.plotIndex);
+                }))
+            .attr("stroke", function (d) {
+                return linkColor(d.typeByGender);
+            })
+            .on("mouseover", linkMouseover)
+            .on("mouseout", mouseout);
+
+        // Draw nodes
+
+        svg.append("g")
+            .attr("class", "nodes")
+            .selectAll(".type")
+            .data(nodesByType)
+            .enter().append("g")
+            .attr("class", function (d) {
+                return d.key + "nodes";
+            })
+            .attr("transform", function (d) {
+                return "rotate(" + degrees(angle(d.key)) + ")";
+            })
+            .selectAll("circle")
+            .data(function (d) {
+                return d.values;
+            })
+            .enter().append("circle")
+            .attr("cx", function (d) {
+                return radius(d.plotIndex);
+            })
+            .attr("r", 4)
+            .attr("fill", function (d) {
+                return color(d.gender);
+            })
+            .on("mouseover", nodeMouseover)
+            .on("mouseout", mouseout);
+
+
+
+        // Highlight the link and connected nodes on mouseover.
+        function linkMouseover(d) {
+            svg.selectAll(".link").classed("active", function (p) {
+                return p === d;
+            });
+            svg.selectAll("circle").classed("active", function (p) {
+                return p === d.source.node || p === d.target.node;
+            });
+            name1.text(d.source.node.name).style("fill", linkColor(d.typeByGender)).style("opacity", "0.75");
+            name2.text(d.target.node.name).style("fill", linkColor(d.typeByGender)).style("opacity", "0.75");
+            gender1.text(capitalizeFirstLetter(d.source.node.gender)).style("fill", linkColor(d.typeByGender)).style("opacity", "0.75");
+            gender2.text(capitalizeFirstLetter(d.target.node.gender)).style("fill", linkColor(d.typeByGender)).style("opacity", "0.75");
+            hiv1.text(d.source.node.type).style("fill", linkColor(d.typeByGender)).style("opacity", "0.75");
+            hiv2.text(d.target.node.type).style("fill", linkColor(d.typeByGender)).style("opacity", "0.75");
+            nodehiv.text("↔").style("fill", linkColor(d.typeByGender)).style("opacity", "0.75").style("font-size", "34");
+        }
+
+        // Highlight the node and connected links on mouseover.
+        function nodeMouseover(d) {
+            var neiNodeList = [];
+            svg.selectAll(".link").classed("active", function (p) {
+                if (p.source.node == d) {
+                    neiNodeList.push(p.target.node);
+                }
+                if (p.target.node == d) {
+                    neiNodeList.push(p.source.node);
+                }
+                return p.source.node === d || p.target.node === d;
+            });
+            d3.select(this).classed("active", true);
+            nodename.text(d.name);
+            nodehiv.text(d.type);
+            nodegender.text(capitalizeFirstLetter(d.gender));
+            nodefriends.text(d.degree + " friends");
+
+            var percentfemale = d3.sum(neiNodeList.map(
+                function (d) {
+                    return d.gender == 'female';
+                })) / neiNodeList.length;
+            var percenthiv = d3.sum(neiNodeList.map(
+                function (d) {
+                    return d.binaryAttribute;
+                })) / neiNodeList.length;
+            var pfemale = d3.round(100 * percentfemale, 2) + "%";
+            var phiv = d3.round(100 * percenthiv, 2) + "%";
+
+            nodephiv.text(phiv + " of friends are HIV-Positive");
+            nodepfemale.text(pfemale + " of friends are female");
+        }
+
+        // Clear any highlighted nodes or links.
+        function mouseout() {
+            svg.selectAll(".active").classed("active", false);
+            name1.text(defaultText);
+            name2.text(defaultText);
+            gender1.text(defaultText);
+            gender2.text(defaultText);
+            hiv1.text(defaultText);
+            hiv2.text(defaultText);
+            nodename.text(defaultText);
+            nodehiv.text(defaultText).style("font-size", "16").style("fill", "white").style("opacity", "1");
+            nodegender.text(defaultText);
+            nodefriends.text(defaultText);
+            nodephiv.text(defaultText);
+            nodepfemale.text(defaultText);
+        }
+
+    }); // close of edges csv   
+
+}); // close of node csv
+
+
+// create sort function that will place females first, then males
+// within those two categories, it will sort in descending order by degree (more connected nodes first) 
+function compare(a, b) {
+    if (a.gender < b.gender)
+        return -1;
+    if (a.gender > b.gender)
+        return 1;
+    if (a.gender == b.gender) {
+        if (a.degree > b.degree)
+            return -1;
+        if (a.degree < b.degree)
+            return 1;
+        return 0;
+    }
+}
+
+// colors for male / female nodes 
+function color(g) {
+    if (g == "male") {
+        return "steelblue";
+    } else {
+        return "#FF66CC";
+    }
+}
+
+// link colors
+function linkColor(g) {
+    if (g == "f-f") {
+        return "#FF66FF";
+    } else if (g == "m-m") {
+        return "steelblue";
+    } else {
+        return "#FFCC66";
+    }
+}
+
+// function to convert radians into degrees
+function degrees(radians) {
+    return radians / Math.PI * 180 - 90;
+}
+
+
+function capitalizeFirstLetter(string) {
+    return string.charAt(0).toUpperCase() + string.slice(1);
+}
+
+
+// A shape generator for Hive links, based on a source and a target.
+// Adapted from http://bost.ocks.org/mike/hive/
+// The source and target are defined in polar coordinates (angle and radius).
+// Ratio links can also be drawn by using a startRadius and endRadius.
+// This class is modeled after d3.svg.chord
+function link() {
+    var source = function (d) {
+        return d.source;
+    },
+        target = function (d) {
+            return d.target;
+        },
+        angle = function (d) {
+            return d.angle;
+        },
+        startRadius = function (d) {
+            return d.radius;
+        },
+        endRadius = startRadius,
+        arcOffset = -Math.PI / 2;
+
+    function link(d, i) {
+        var s = node(source, this, d, i),
+            t = node(target, this, d, i),
+            x;
+        if (t.a < s.a) x = t, t = s, s = x;
+        if (t.a - s.a > Math.PI) s.a += 2 * Math.PI;
+        var a1 = s.a + (t.a - s.a) / 3,
+            a2 = t.a - (t.a - s.a) / 3;
+
+        // draw cubic bezier curves for nodes on different axes
+        if (s.a != t.a) {
+            return s.r0 - s.r1 || t.r0 - t.r1 ? "M" + Math.cos(s.a) * s.r0 + "," + Math.sin(s.a) * s.r0 + "L" + Math.cos(s.a) * s.r1 + "," + Math.sin(s.a) * s.r1 + "C" + Math.cos(a1) * s.r1 + "," + Math.sin(a1) * s.r1 + " " + Math.cos(a2) * t.r1 + "," + Math.sin(a2) * t.r1 + " " + Math.cos(t.a) * t.r1 + "," + Math.sin(t.a) * t.r1 + "L" + Math.cos(t.a) * t.r0 + "," + Math.sin(t.a) * t.r0 + "C" + Math.cos(a2) * t.r0 + "," + Math.sin(a2) * t.r0 + " " + Math.cos(a1) * s.r0 + "," + Math.sin(a1) * s.r0 + " " + Math.cos(s.a) * s.r0 + "," + Math.sin(s.a) * s.r0 : "M" + Math.cos(s.a) * s.r0 + "," + Math.sin(s.a) * s.r0 + "C" + Math.cos(a1) * s.r1 + "," + Math.sin(a1) * s.r1 + " " + Math.cos(a2) * t.r1 + "," + Math.sin(a2) * t.r1 + " " + Math.cos(t.a) * t.r1 + "," + Math.sin(t.a) * t.r1;
+        }
+        // draw quadratic bezier curves for nodes on same axis
+        else {
+            a = s.a
+            var aCtrl = d.source.type === "pos" ? aCtrl = a + minorAngle * 2 : aCtrl = a - minorAngle * 2
+            m = Math.abs(s.r1 - t.r1)
+            rCtrl = s.r1 + m
+            return "M" + Math.cos(s.a) * s.r0 + "," + Math.sin(s.a) * s.r0 + "Q" + Math.cos(aCtrl) * rCtrl + "," + Math.sin(aCtrl) * rCtrl + " " + Math.cos(t.a) * t.r1 + "," + Math.sin(t.a) * t.r1;
+        }
+    }
+
+    function node(method, thiz, d, i) {
+        var node = method.call(thiz, d, i),
+            a = +(typeof angle === "function" ? angle.call(thiz, node, i) : angle) + arcOffset,
+            r0 = +(typeof startRadius === "function" ? startRadius.call(thiz, node, i) : startRadius),
+            r1 = (startRadius === endRadius ? r0 : +(typeof endRadius === "function" ? endRadius.call(thiz, node, i) : endRadius));
+        return {
+            r0: r0,
+            r1: r1,
+            a: a
+        };
+    }
+
+    link.source = function (_) {
+        if (!arguments.length) return source;
+        source = _;
+        return link;
+    };
+
+    link.target = function (_) {
+        if (!arguments.length) return target;
+        target = _;
+        return link;
+    };
+
+    link.angle = function (_) {
+        if (!arguments.length) return angle;
+        angle = _;
+        return link;
+    };
+
+    link.radius = function (_) {
+        if (!arguments.length) return startRadius;
+        startRadius = endRadius = _;
+        return link;
+    };
+
+    link.startRadius = function (_) {
+        if (!arguments.length) return startRadius;
+        startRadius = _;
+        return link;
+    };
+
+    link.endRadius = function (_) {
+        if (!arguments.length) return endRadius;
+        endRadius = _;
+        return link;
+    };
+
+    return link;
+};
+
+
+
+//* Legend goes here *//
+var lw = 300;
+var lh = 350;
+
+svgLegend.append("rect")
+    .attr("class", "legendcont")
+    .attr("x", (350 - lw) / 2)
+    .attr("y", 150)
+    .attr("width", lw)
+    .attr("height", lh)
+    .attr("fill", "#181818")
+    .attr("opacity", 0.5)
+    .attr("stroke", "white")
+    .attr("stroke-width", "3px")
+    .attr("rx", 15)
+    .attr("ry", 15);
+
+var legendContainer = svgLegend.append("g").attr("transform", "translate(" + (350 - lw) / 2 + ",150)");
+var legendContainerMargin = 50;
+
+
+
+legendContainer.append("text")
+    .attr("x", lw / 2)
+    .attr("y", 20)
+    .text("Gender")
+    .attr("text-anchor", "middle")
+    .attr("style", "fill: white; font-size:18");
+
+legendContainer.append("circle")
+    .attr("cx", legendContainerMargin)
+    .attr("cy", legendContainerMargin)
+    .attr("r", 7)
+    .attr("fill", "#FF66CC");
+
+legendContainer.append("circle")
+    .attr("cx", (lw + legendContainerMargin) / 2)
+    .attr("cy", legendContainerMargin)
+    .attr("r", 7)
+    .attr("fill", "steelblue");
+
+legendContainer.append("text")
+    .attr("class", "mainlegendtext")
+    .attr("x", legendContainerMargin + 15)
+    .attr("y", legendContainerMargin)
+    .text("Female")
+    .attr("text-anchor", "start")
+    .attr("dy", "4")
+    .attr("style", "fill: white");
+
+legendContainer.append("text")
+    .attr("class", "mainlegendtext")
+    .attr("x", (lw + legendContainerMargin) / 2 + 15)
+    .attr("y", legendContainerMargin)
+    .text("Male")
+    .attr("text-anchor", "start")
+    .attr("dy", "4")
+    .attr("style", "fill: white");
+
+
+
+legendContainer.append("text")
+    .attr("x", lw / 2)
+    .attr("y", 20 + 75)
+    .text("Link Type")
+    .attr("text-anchor", "middle")
+    .attr("style", "fill: white; font-size:18");
+
+var legendLinkTypespacing = (lw - 2 * (legendContainerMargin - 10)) / 3;
+
+
+legendContainer.append("rect")
+    .attr("x", legendContainerMargin - 10)
+    .attr("y", legendContainerMargin + 75)
+    .attr("width", 20)
+    .attr("height", 2)
+    .attr("fill", "#FF66FF")
+    .attr("opacity", "0.6");
+
+legendContainer.append("text")
+    .attr("class", "mainlegendtext")
+    .attr("x", legendContainerMargin + 15)
+    .attr("y", legendContainerMargin + 75)
+    .text("F-F")
+    .attr("text-anchor", "start")
+    .attr("dy", "4")
+    .attr("style", "fill: white");
+
+legendContainer.append("rect")
+    .attr("x", legendContainerMargin - 10 + legendLinkTypespacing + 20)
+    .attr("y", legendContainerMargin + 75)
+    .attr("width", 20)
+    .attr("height", 2)
+    .attr("fill", "#FFCC66")
+    .attr("opacity", "0.6");
+
+legendContainer.append("text")
+    .attr("class", "mainlegendtext")
+    .attr("x", legendContainerMargin - 10 + legendLinkTypespacing + 45)
+    .attr("y", legendContainerMargin + 75)
+    .text("F-M")
+    .attr("text-anchor", "start")
+    .attr("dy", "4")
+    .attr("style", "fill: white");
+
+legendContainer.append("rect")
+    .attr("x", legendContainerMargin - 10 + 2 * legendLinkTypespacing + 20)
+    .attr("y", legendContainerMargin + 75)
+    .attr("width", 20)
+    .attr("height", 2)
+    .attr("fill", "steelblue")
+    .attr("opacity", "0.6");
+
+legendContainer.append("text")
+    .attr("class", "mainlegendtext")
+    .attr("x", legendContainerMargin - 10 + 2 * legendLinkTypespacing + 45)
+    .attr("y", legendContainerMargin + 75)
+    .text("M-M")
+    .attr("text-anchor", "start")
+    .attr("dy", "4")
+    .attr("style", "fill: white");
+
+legendContainer.append("line")
+    .attr("x1", 0)
+    .attr("y1", legendContainerMargin + 100)
+    .attr("x2", lw)
+    .attr("y2", legendContainerMargin + 100)
+    .attr("stroke", "white");
+
+/// Changing here:   
+
+// if select node:
+legendContainer.append("text")
+    .attr("id", "nodename")
+    .attr("x", lw / 2)
+    .attr("y", legendContainerMargin + 150)
+    .text("Name")
+    .attr("text-anchor", "middle")
+    .attr("dy", "4")
+    .attr("style", "fill: white; font-size:18");
+
+legendContainer.append("text")
+    .attr("id", "nodehiv")
+    .attr("x", lw / 2)
+    .attr("y", legendContainerMargin + 175)
+    .text("HIV")
+    .attr("text-anchor", "middle")
+    .attr("dy", "4")
+    .attr("style", "fill: white");
+
+
+legendContainer.append("text")
+    .attr("id", "nodegender")
+    .attr("x", lw / 2)
+    .attr("y", legendContainerMargin + 200)
+    .text("Gender")
+    .attr("text-anchor", "middle")
+    .attr("dy", "4")
+    .attr("style", "fill: white");
+legendContainer.append("text")
+    .attr("id", "nodefriends")
+    .attr("x", lw / 2)
+    .attr("y", legendContainerMargin + 225)
+    .text("Gender")
+    .attr("text-anchor", "middle")
+    .attr("dy", "4")
+    .attr("style", "fill: white");
+
+legendContainer.append("text")
+    .attr("id", "phiv")
+    .attr("x", lw / 2)
+    .attr("y", legendContainerMargin + 250)
+    .text("")
+    .attr("text-anchor", "middle")
+    .attr("dy", "4")
+    .attr("style", "fill: white");
+
+legendContainer.append("text")
+    .attr("id", "pfemale")
+    .attr("x", lw / 2)
+    .attr("y", legendContainerMargin + 275)
+    .text("")
+    .attr("text-anchor", "middle")
+    .attr("dy", "4")
+    .attr("style", "fill: white");
+
+
+// if select link:
+
+legendContainer.append("text")
+    .attr("id", "name1")
+    .attr("x", lw / 4)
+    .attr("y", legendContainerMargin + 150)
+    .text("Name1")
+    .attr("text-anchor", "middle")
+    .attr("dy", "4")
+    .attr("style", "fill: white; font-size:18");
+
+legendContainer.append("text")
+    .attr("id", "name2")
+    .attr("x", 3 * lw / 4)
+    .attr("y", legendContainerMargin + 150)
+    .text("Name2")
+    .attr("text-anchor", "middle")
+    .attr("dy", "4")
+    .attr("style", "fill: white; font-size:18");
+
+
+legendContainer.append("text")
+    .attr("id", "hiv1")
+    .attr("x", lw / 4)
+    .attr("y", legendContainerMargin + 175)
+    .text("HIV1")
+    .attr("text-anchor", "middle")
+    .attr("dy", "4")
+    .attr("style", "fill: white");
+
+legendContainer.append("text")
+    .attr("id", "hiv2")
+    .attr("x", 3 * lw / 4)
+    .attr("y", legendContainerMargin + 175)
+    .text("HIV2")
+    .attr("text-anchor", "middle")
+    .attr("dy", "4")
+    .attr("style", "fill: white");
+
+legendContainer.append("text")
+    .attr("id", "gender1")
+    .attr("x", lw / 4)
+    .attr("y", legendContainerMargin + 200)
+    .text("Gender1")
+    .attr("text-anchor", "middle")
+    .attr("dy", "4")
+    .attr("style", "fill: white");
+
+legendContainer.append("text")
+    .attr("id", "gender2")
+    .attr("x", 3 * lw / 4)
+    .attr("y", legendContainerMargin + 200)
+    .text("Gender2")
+    .attr("text-anchor", "middle")
+    .attr("dy", "4")
+    .attr("style", "fill: white");
+    
+</script>
+</body>
+</html>
